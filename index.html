@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>2026 日本雙城之旅</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+    <style>
+        /* --- 全域設定 --- */
+        body { font-family: 'Inter', 'Noto Sans TC', sans-serif; overflow: hidden; background-color: #f1f5f9; }
+        #map { height: 100vh; width: 100%; z-index: 0; }
+        
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* UI 元件 */
+        .day-pill.active { background-color: #0f172a; color: white; transform: scale(1.05); box-shadow: 0 4px 12px rgba(15,23,42,0.3); }
+        .day-pill { transition: all 0.3s ease; }
+
+        /* --- 底部抽屜 (Bottom Sheet) --- */
+        .bottom-sheet {
+            position: fixed; bottom: 0; left: 0; width: 100%;
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            border-top-left-radius: 24px; border-top-right-radius: 24px;
+            box-shadow: 0 -5px 40px rgba(0,0,0,0.15);
+            transition: height 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+            z-index: 500; display: flex; flex-direction: column;
+        }
+
+        /* 抽屜高度狀態 */
+        .sheet-min { height: 160px; }
+        .sheet-half { height: 50vh; }
+        .sheet-full { height: 92vh; }
+
+        /* 詳細資訊 Modal */
+        .detail-modal {
+            position: fixed; inset: 0; z-index: 1000;
+            display: flex; align-items: flex-end; justify-content: center;
+            pointer-events: none; opacity: 0; transition: opacity 0.3s;
+        }
+        .detail-modal.open { pointer-events: auto; opacity: 1; }
+        .detail-modal-bg { position: absolute; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
+        .detail-card {
+            background: white; width: 100%; max-width: 500px;
+            border-top-left-radius: 24px; border-top-right-radius: 24px;
+            overflow: hidden; transform: translateY(100%); transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            max-height: 85vh; display: flex; flex-direction: column;
+        }
+        .detail-modal.open .detail-card { transform: translateY(0); }
+
+        /* PDF 預覽 Modal */
+        .pdf-modal {
+            position: fixed; inset: 0; z-index: 2000; 
+            background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(5px);
+            display: flex; flex-direction: column;
+            opacity: 0; pointer-events: none; transition: opacity 0.3s;
+        }
+        .pdf-modal.open { opacity: 1; pointer-events: auto; }
+
+        /* --- 專屬 Icon 地圖標記樣式 --- */
+        .custom-marker {
+            width: 32px; height: 32px;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            color: white; font-size: 14px;
+            border: 2px solid white;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        /* 點擊或 Hover 時的效果 */
+        .custom-marker:hover, .custom-marker.active {
+            transform: scale(1.15);
+            box-shadow: 0 0 0 4px rgba(255,255,255,0.4);
+            z-index: 100 !important;
+        }
+
+        /* 顏色主題 */
+        .bg-spot { background: #ef4444; background: linear-gradient(135deg, #ef4444, #dc2626); } 
+        .bg-food { background: #f59e0b; background: linear-gradient(135deg, #f59e0b, #d97706); } 
+        .bg-hotel { background: #3b82f6; background: linear-gradient(135deg, #3b82f6, #2563eb); }
+        .bg-nearby { background: #8b5cf6; background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
+
+        /* 距離標籤 (Modern Dark Glass) - 顯示在 Icon 上方 */
+        .dist-label-container { display: flex; align-items: center; justify-content: center; width: 160px; pointer-events: none; }
+        .dist-label { 
+            background: rgba(15, 23, 42, 0.9); 
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            color: white; padding: 6px 14px; border-radius: 99px; 
+            font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+            border: 1px solid rgba(255,255,255,0.15);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            display: flex; align-items: center; gap: 6px;
+            transform: translateY(-50px); /* 讓標籤浮在 Icon 正上方 */
+            white-space: nowrap;
+        }
+
+        /* 航班卡片 */
+        .flight-card { background: white; border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.02); transition: transform 0.2s; }
+        .flight-card:active { transform: scale(0.98); background-color: #f8fafc; }
+        
+        /* 抽屜把手 */
+        .sheet-handle-area { width: 100%; height: 30px; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; border-bottom: 1px solid #f1f5f9; }
+        .sheet-handle-bar { width: 40px; height: 5px; background: #cbd5e1; border-radius: 10px; }
+
+        /* 倒數計時數字盒 */
+        .countdown-box { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; padding: 4px 8px; text-align: center; min-width: 45px; }
+        .countdown-label { font-size: 9px; opacity: 0.8; text-transform: uppercase; margin-top: -2px; }
+
+        /* Desktop RWD */
+        @media (min-width: 768px) {
+            .bottom-sheet { width: 400px; height: 85vh !important; top: 80px; left: 30px; bottom: auto; border-radius: 24px; border: 1px solid rgba(255,255,255,0.8); }
+            .day-selector-container { width: 400px; left: 30px; top: 20px; padding: 0 !important; background: transparent !important; }
+            .sheet-handle-area { display: none; }
+            .sheet-min, .sheet-half, .sheet-full { height: auto; }
+            .detail-modal { align-items: center; }
+            .detail-card { border-radius: 24px; height: auto; max-height: 80vh; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 地圖 -->
+    <div id="map"></div>
+
+    <!-- UI 層 -->
+    <div class="fixed inset-0 pointer-events-none z-10">
+        <!-- 頂部日期選單 -->
+        <div class="day-selector-container absolute top-0 left-0 w-full pt-4 px-4 bg-gradient-to-b from-white/95 to-transparent md:bg-none pointer-events-auto z-20">
+            <div class="flex overflow-x-auto no-scrollbar gap-2 pb-2 snap-x" id="day-tabs"></div>
+        </div>
+
+        <!-- 浮動定位按鈕 -->
+        <div class="absolute top-24 right-4 flex flex-col gap-3 pointer-events-auto md:right-8 md:top-8 z-20">
+            <button onclick="locateUser(true)" class="w-12 h-12 bg-white rounded-full shadow-xl flex items-center justify-center text-pink-500 hover:scale-110 transition border-2 border-pink-50">
+                <i class="fas fa-location-arrow text-xl"></i>
+            </button>
+        </div>
+
+        <!-- 底部抽屜 -->
+        <div id="bottom-sheet" class="bottom-sheet pointer-events-auto sheet-half shadow-2xl">
+            <div class="sheet-handle-area" onclick="cycleSheetHeight()">
+                <div class="sheet-handle-bar"></div>
+            </div>
+            
+            <!-- 倒數計時區 -->
+            <div id="countdown-area"></div>
+
+            <!-- 頭部資訊 -->
+            <div class="px-6 py-3 border-b border-slate-100 flex justify-between items-center bg-white/60 backdrop-blur-md sticky top-0 z-20">
+                <div>
+                    <h2 class="text-xl font-bold text-slate-800" id="day-title">Day 1</h2>
+                    <div class="text-xs text-slate-500 font-medium" id="day-date">...</div>
+                </div>
+                <div class="text-right">
+                    <div class="flex items-center justify-end gap-2">
+                        <i class="fas fa-spinner fa-spin text-slate-400" id="weather-icon"></i>
+                        <span class="text-2xl font-bold text-slate-700" id="weather-temp">--°</span>
+                    </div>
+                    <span class="text-[10px] text-slate-400 font-bold" id="weather-desc">載入中</span>
+                </div>
+            </div>
+
+            <!-- 內容列表 -->
+            <div class="flex-1 overflow-y-auto no-scrollbar" id="sheet-content">
+                <div class="py-5 pr-5 pl-0 space-y-4" id="timeline-container"></div>
+                
+                <!-- 附近探索 -->
+                <div class="pl-5 pr-2 pb-12 pt-6 bg-slate-50/80 border-t border-slate-100">
+                    <div class="flex justify-between items-center mb-3 pr-4">
+                        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider"><i class="fas fa-radar text-blue-500 mr-1.5"></i>附近探索</h3>
+                    </div>
+                    <div class="flex overflow-x-auto no-scrollbar gap-3 pb-2" id="nearby-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 詳細資訊 Modal -->
+    <div id="detail-modal" class="detail-modal">
+        <div class="detail-modal-bg" onclick="closeModal()"></div>
+        <div class="detail-card relative">
+            <button onclick="closeModal()" class="absolute top-4 right-4 z-20 w-8 h-8 bg-black/30 text-white rounded-full flex items-center justify-center backdrop-blur-md hover:bg-black/50 transition"><i class="fas fa-times"></i></button>
+            <div class="overflow-y-auto no-scrollbar h-full flex flex-col">
+                <div class="h-56 w-full relative flex-shrink-0">
+                    <img id="modal-img" src="" class="w-full h-full object-cover">
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent"></div>
+                    <div class="absolute bottom-4 left-6 text-white pr-4">
+                        <div class="text-xs font-bold px-2 py-0.5 rounded inline-block mb-1 text-white" id="modal-tag">TAG</div>
+                        <h2 class="text-2xl font-bold leading-tight" id="modal-title">Title</h2>
+                    </div>
+                </div>
+                <div class="p-6 flex-1 flex flex-col">
+                    <div class="flex-1">
+                        <p class="text-slate-700 leading-relaxed text-sm text-justify mb-4" id="modal-desc"></p>
+                        <div class="bg-amber-50 border border-amber-100 rounded-xl p-4 mb-4">
+                            <h3 class="text-xs font-bold text-amber-600 uppercase mb-1"><i class="fas fa-lightbulb mr-1.5"></i>Tips</h3>
+                            <p class="text-slate-700 text-sm" id="modal-tips"></p>
+                        </div>
+                    </div>
+                    <a id="modal-nav-btn" href="#" target="_blank" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold text-center shadow-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 mt-auto"><i class="fas fa-location-arrow"></i> Google 導航</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PDF 預覽 Modal -->
+    <div id="pdf-modal" class="pdf-modal">
+        <div class="flex justify-between items-center p-4 border-b border-slate-700">
+            <h3 class="text-white font-bold flex items-center gap-2">
+                <i class="fas fa-ticket-alt text-amber-400"></i> 電子機票預覽
+            </h3>
+            <div class="flex gap-3">
+                <a id="pdf-download-btn" href="#" download class="text-xs bg-slate-700 text-white px-3 py-1.5 rounded hover:bg-slate-600 transition"><i class="fas fa-download mr-1"></i>下載</a>
+                <button onclick="closePdfModal()" class="w-8 h-8 bg-slate-700 text-white rounded-full flex items-center justify-center hover:bg-red-500 transition"><i class="fas fa-times"></i></button>
+            </div>
+        </div>
+        <div class="flex-1 p-2 md:p-6 bg-slate-800 relative">
+            <div class="w-full h-full bg-white rounded-lg overflow-hidden shadow-2xl relative">
+                <iframe id="pdf-frame" src="" class="w-full h-full border-0"></iframe>
+                <div class="absolute inset-0 flex items-center justify-center pointer-events-none -z-10">
+                    <span class="text-slate-400 text-sm"><i class="fas fa-spinner fa-spin mr-2"></i>載入文件中...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 0. 設定與資料 ---
+        const TRIP_START_DATE = new Date("2026-01-20T14:25:00"); 
+
+        const FLIGHT_INFO = {
+            outbound: { logo: "images/china_air.svg", code: "CI 108", dept: "14:25", arr: "18:30", from: "TPE", to: "NRT", term: "T2", ticket: "pdf/ticket_outbound.pdf" },
+            inbound:  { logo: "images/jetstar.png", code: "GK 55", dept: "14:50", arr: "17:10", from: "KIX", to: "TPE", term: "T1", ticket: "pdf/ticket_inbound.pdf" }
+        };
+
+        const itinerary = [
+            {
+                day: "Day 1", date: "1/20 (二)", fullDate: "2026-01-20",
+                items: [
+                    { type: "flight-out", coords: [35.7719, 140.3906], title: "飛往東京", path: [[25.0797, 121.2342], [35.7719, 140.3906]] },
+                    { time: "20:25<br>OR<br>20:45", type: "transport", title: "Skyliner 直達上野", icon: "train", coords: [35.7137, 139.7772], img: "images/skyliner.jpg", desc: "成田機場進入東京市區最舒適快速的選擇，只要41分鐘即可抵達上野。全車對號座，車廂寬敞，可以好好休息欣賞沿途風景。", tips: "事先上網買好票，進站直接掃 QR Code 劃位，不用在櫃台排隊。" },
+                    { time: "21:00", type: "hotel", title: "上野飯店 Check-in", icon: "bed", coords: [35.712722776499135, 139.78208618278205], img: "images/ueno_hotel.jpg", desc: "位於交通樞紐上野站旁，交通極其便利。周邊藥妝店、餐廳林立，是開始東京之旅的最佳基地。", tips: "Check-in 後，將這幾天不需要的大件行李透過櫃台『宅急便』寄往京都飯店。" },
+                    { time: "21:00", type: "food", title: "鴨to蔥", icon: "bowl-rice", coords: [35.70851616118359, 139.77532879812566], img: "images/ichiran.jpg", desc: "以鴨肉、蔥與水精燉出純粹鮮甜湯頭，並能自選三款時令蔥段作為配料的人氣排隊拉麵店", tips: "必點招牌「鴨拉麵」並從三種時令蔥中自選兩款，一定要加點一份「小鴨肉親子丼」組成套餐" }
+                ]
+            },
+            {
+                day: "Day 2", date: "1/21 (三)", fullDate: "2026-01-21",
+                items: [
+                    { time: "09:00", type: "spot", title: "淺草寺 & 雷門", icon: "gopuram", coords: [35.7111, 139.7963], img: "images/sensoji.jpg", desc: "東京最古老的寺廟，巨大的紅色『雷門』燈籠是東京的象徵。走過熱鬧的仲見世通，感受江戶時代的下町風情。", tips: "據說淺草寺的籤很靈，抽到吉可以帶回家，抽到凶記得綁在架上由神明幫你化解。" },
+                    { time: "12:00", type: "food", title: "淺草炸牛排", icon: "utensils", coords: [35.7100, 139.7960], img: "images/gyukatsu.jpg", desc: "外皮炸得金黃酥脆，內裡還是粉嫩的半熟牛肉。自己在石板上煎烤到喜歡的熟度，沾上山葵醬油，入口即化。", tips: "這家店非常熱門，建議11:30前抵達排隊，不然可能要等上一小時喔。" },
+                    { time: "14:00", type: "spot", title: "澀谷十字路口", icon: "walking", coords: [35.6595, 139.7005], img: "images/shibuya.jpg", desc: "世界最繁忙的十字路口，綠燈一亮，數千人同時穿越的壯觀景象。這裡是東京流行文化的發源地，充滿活力。", tips: "想拍俯瞰照，可以去 Magnet by 109 的觀景台，視野絕佳。" },
+                    { time: "16:30", type: "spot", title: "Shibuya Sky", icon: "cloud-sun", coords: [35.6585, 139.7013], img: "images/shibuyasky.jpg", desc: "東京最新的必去地標！擁有360度露天無邊際觀景台。站在這裡，東京鐵塔、晴空塔甚至富士山都盡收眼底。", tips: "一定要預約日落前一小時的時段，一次捕捉白天的清晰、夕陽的浪漫與夜景的璀璨。" }
+                ]
+            },
+            {
+                day: "Day 3", date: "1/22 (四)", fullDate: "2026-01-22",
+                items: [
+                    { time: "08:30", type: "spot", title: "東京迪士尼樂園", icon: "wand-magic-sparkles", coords: [35.6329, 139.8804], img: "images/disney.jpg", desc: "夢想與魔法的王國。在灰姑娘城堡前拍照，體驗經典的遊樂設施，沉浸在童話世界的一整天。", tips: "入園第一件事：打開 App 抽取『美女與野獸』的 DPA (付費快速通關)，省下排隊時間。" }
+                ]
+            },
+            {
+                day: "Day 4", date: "1/23 (五)", fullDate: "2026-01-23",
+                items: [
+                    { time: "09:00", type: "food", title: "築地場外市場", icon: "fish", coords: [35.6654, 139.7706], img: "images/tsukiji.jpg", desc: "東京的廚房！雖然場內市場搬家了，但場外市場依舊充滿活力。新鮮的海鮮丼、玉子燒、烤海鮮串應有盡有。", tips: "推薦『山長玉子燒』，甜鹹適中熱騰騰的最好吃；還有『狐狸屋牛丼』也是老饕最愛。" },
+                    { time: "14:00", type: "transport", title: "新幹線 -> 京都", icon: "train-subway", coords: [35.6812, 139.7671], img: "images/shinkansen.jpg", desc: "搭乘 Nozomi 號新幹線，體驗時速300公里的貼地飛行。兩個多小時就能從繁華東京穿越到古都京都。", tips: "記得劃位選 E 席 (右側靠窗)，天氣好經過靜岡縣時，富士山就在你的窗邊！" },
+                    { time: "16:15", type: "hotel", title: "京都車站 Check-in", icon: "torii-gate", coords: [34.9858, 135.7587], img: "images/kyoto_station.jpg", desc: "既是交通中心也是藝術品。巨大的鋼骨結構與大階梯，展現了古都現代的一面。晚上大階梯會有美麗的燈光秀。", tips: "晚餐可以直接在伊勢丹百貨樓上吃『名代炸豬排』，或是拉麵小路解決。" }
+                ]
+            },
+            {
+                day: "Day 5", date: "1/24 (六)", fullDate: "2026-01-24",
+                items: [
+                    { time: "10:30", type: "spot", title: "奈良公園 & 餵鹿", icon: "paw", coords: [34.6889, 135.8398], img: "images/nara.jpg", desc: "古老的東大寺與上千隻野生小鹿共存的地方。看著小鹿在草地上悠閒漫步，非常療癒。", tips: "鹿仙貝一拿出來，鹿群會變得很『熱情』。記得將手舉高或藏好，注意安全喔！" },
+                    { time: "18:15", type: "event", title: "若草山燒山祭", icon: "fire", coords: [34.6905, 135.8505], img: "images/fire.jpg", desc: "【年度限定大祭】點燃整座若草山的枯草，紅色的火焰在夜空中蔓延，伴隨著燦爛煙火，是關西冬季最震撼的祭典。", tips: "一月晚上的奈良山上非常寒冷，請務必穿上最暖的衣物，暖暖包貼好貼滿。" }
+                ]
+            },
+            {
+                day: "Day 6", date: "1/25 (日)", fullDate: "2026-01-25",
+                items: [
+                    { time: "10:30", type: "spot", title: "貴船神社 水占卜", icon: "water", coords: [35.1215, 135.7628], img: "images/kifune.jpg", desc: "供奉水神的古老神社，兩旁紅色的燈籠參道是絕美的拍照景點。冬天下雪時更是夢幻。", tips: "一定要體驗『水占卜』，將空白的籤紙放入神水中，文字就會慢慢浮現，非常神奇。" },
+                    { time: "17:00", type: "spot", title: "祇園花見小路", icon: "fan", coords: [35.0035, 135.7749], img: "images/gion.jpg", desc: "保留著古老町家建築的街道，是京都藝妓文化的中心。運氣好的話，能看到藝妓或舞妓匆匆趕場的身影。", tips: "這裡有嚴格的規定：禁止觸碰藝妓、禁止阻擋道路、禁止使用腳架。請用眼睛欣賞就好。" }
+                ]
+            },
+            {
+                day: "Day 7", date: "1/26 (一)", fullDate: "2026-01-26",
+                items: [
+                    { time: "08:30", type: "spot", title: "清水寺", icon: "place-of-worship", coords: [34.9948, 135.7850], img: "images/kiyomizu.jpg", desc: "京都最著名的地標，懸空的『清水舞台』完全沒用一根釘子，眺望京都市景絕美。", tips: "音羽之瀧有三道水流，分別代表學業、戀愛、長壽。只能選擇一道喝，貪心喝多據說就不靈囉。" },
+                    { time: "14:30", type: "spot", title: "八坂神社", icon: "torii-gate", coords: [35.0036, 135.7785], img: "images/yasaka.jpg", desc: "祇園的守護神社，也是祈求戀愛運的名所。紅色的西樓門非常顯眼。", tips: "境內有著名的『美容水』，據說將水拍在臉上，不僅皮膚變好，心靈也會變美。" }
+                ]
+            },
+            {
+                day: "Day 8", date: "1/27 (二)", fullDate: "2026-01-27",
+                items: [
+                    { time: "11:30", type: "transport", title: "Haruka -> 機場", icon: "train", coords: [34.9858, 135.7587], img: "images/haruka.jpg", desc: "搭乘 Hello Kitty 彩繪列車前往關西機場，為旅程畫下可愛的句點。", tips: "建議提前在網路上買好優惠票，進站直接刷 QR Code，方便又省錢。" },
+                    { time: "13:00", type: "transport", title: "關西機場 報到", icon: "suitcase", coords: [34.4320, 135.2303], img: "images/kix.jpg", desc: "辦理登機手續，最後衝刺免稅店，把想買的伴手禮一次補齊。", tips: "關西機場人潮眾多，安檢嚴格，強烈建議起飛前 2.5 到 3 小時抵達機場。" },
+                    { type: "flight-in", coords: [34.4320, 135.2303], title: "飛往桃園", path: [[34.4320, 135.2303], [25.0797, 121.2342]] }
+                ]
+            }
+        ];
+
+        // 專屬地標資料庫 (已補上 icon)
+        const landmarksDB = [
+            { name: "上野公園", coords: [35.7140, 139.7740], q: "Ueno Park", img: "images/ueno_park.jpg", icon: "tree" },
+            { name: "東京晴空塔", coords: [35.7100, 139.8107], q: "Tokyo Skytree", img: "images/skytree.jpg", icon: "location-arrow" },
+            { name: "東京鐵塔", coords: [35.6585, 139.7454], q: "Tokyo Tower", img: "images/tokyo_tower.jpg", icon: "tower-broadcast" },
+            { name: "京都塔", coords: [34.9875, 135.7594], q: "Kyoto Tower", img: "images/kyoto_tower.jpg", icon: "tower-observation" },
+            { name: "伏見稻荷", coords: [34.9671, 135.7726], q: "Fushimi Inari", img: "images/fushimi.jpg", icon: "torii-gate" },
+            { name: "大阪城", coords: [34.6873, 135.5262], q: "Osaka Castle", img: "images/osaka_castle.jpg", icon: "chess-rook" },
+            { name: "秋葉原", coords: [35.6983, 139.7730], q: "Akihabara", img: "images/akihabara.jpg", icon: "gamepad" },
+            { name: "錦市場", coords: [35.0050, 135.7631], q: "Nishiki Market", img: "images/nishiki.jpg", icon: "fish" },
+            { name: "道頓堀", coords: [34.6687, 135.5012], q: "Dotonbori", img: "images/dotonbori.jpg", icon: "person-running" }
+        ];
+
+        // --- 1. 初始化 ---
+        const map = L.map('map', { zoomControl: false }).setView([35.7137, 139.7772], 13);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+        
+        const markersGroup = L.layerGroup().addTo(map); 
+        const nearbyGroup = L.layerGroup().addTo(map);  
+        const routeGroup = L.layerGroup().addTo(map);
+
+        let activeDayIndex = 0;
+        let sheetState = 0; 
+        const sheetStates = ['sheet-half', 'sheet-full', 'sheet-min'];
+        let currentUserLoc = null;
+
+        function init() {
+            renderTabs();
+            startCountdown();
+            selectDay(0);
+            map.locate({setView: false, maxZoom: 16});
+        }
+
+        // --- 2. 抽屜與視圖控制 ---
+        function cycleSheetHeight() {
+            const sheet = document.getElementById('bottom-sheet');
+            sheet.classList.remove(sheetStates[sheetState]);
+            sheetState = (sheetState + 1) % 3;
+            sheet.classList.add(sheetStates[sheetState]);
+            if(sheetState !== 1) { 
+                const currentData = itinerary[activeDayIndex].items[0];
+                flyToLoc(currentData.coords[0], currentData.coords[1], true);
+            }
+        }
+
+        function setSheetState(stateIndex) {
+            const sheet = document.getElementById('bottom-sheet');
+            sheet.classList.remove(sheetStates[sheetState]);
+            sheetState = stateIndex;
+            sheet.classList.add(sheetStates[sheetState]);
+        }
+
+        // --- 3. 倒數計時 ---
+        function startCountdown() {
+            const area = document.getElementById('countdown-area');
+            function update() {
+                const now = new Date();
+                const diff = TRIP_START_DATE - now;
+                if (diff <= 0) {
+                    area.innerHTML = `<div class="m-4 mb-0 p-4 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-2xl text-white shadow-lg flex items-center gap-3"><i class="fas fa-camera text-2xl animate-pulse"></i><div class="font-bold text-lg">旅程進行中！Have fun!</div></div>`;
+                    return;
+                }
+                const d = Math.floor(diff / (1000 * 60 * 60 * 24));
+                const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                const s = Math.floor((diff % (1000 * 60)) / 1000);
+                area.innerHTML = `<div class="m-4 mb-0 p-4 bg-gradient-to-br from-violet-600 via-indigo-600 to-blue-600 rounded-2xl text-white shadow-lg relative overflow-hidden"><div class="absolute top-0 right-0 p-4 opacity-10"><i class="fas fa-plane text-6xl transform -rotate-12"></i></div><div class="flex justify-between items-center relative z-10"><div><div class="text-[10px] font-bold opacity-80 uppercase tracking-widest mb-2">Flight to Japan</div><div class="flex gap-2"><div class="countdown-box"><div class="text-xl font-black font-mono">${d}</div><div class="countdown-label">Days</div></div><div class="countdown-box"><div class="text-xl font-black font-mono">${h}</div><div class="countdown-label">Hrs</div></div><div class="countdown-box"><div class="text-xl font-black font-mono">${m}</div><div class="countdown-label">Min</div></div><div class="countdown-box"><div class="text-xl font-black font-mono">${s}</div><div class="countdown-label">Sec</div></div></div></div></div></div>`;
+            }
+            setInterval(update, 1000);
+            update();
+        }
+
+        // --- 4. 核心功能 ---
+        function selectDay(index) {
+            activeDayIndex = index;
+            const data = itinerary[index];
+            document.querySelectorAll('.day-pill').forEach(el => el.classList.remove('active'));
+            document.getElementById(`tab-${index}`).classList.add('active');
+            document.getElementById(`tab-${index}`).scrollIntoView({ behavior: 'smooth', inline: 'center' });
+            document.getElementById('day-title').innerText = data.day;
+            document.getElementById('day-date').innerText = data.date;
+            const coords = data.items[0].coords;
+            fetchWeather(coords[0], coords[1]);
+            renderTimeline(data);
+            updateMap(data);
+            updateNearby(data.items[0].coords);
+            if(window.innerWidth < 768) setSheetState(0);
+        }
+
+        function renderTimeline(data) {
+            const container = document.getElementById('timeline-container');
+            container.innerHTML = data.items.map((item, i) => {
+                if (item.type.includes("flight")) {
+                    const f = item.type === "flight-out" ? FLIGHT_INFO.outbound : FLIGHT_INFO.inbound;
+                    return `
+                    <div class="mb-5 pl-5 cursor-pointer transform transition active:scale-[0.98]" onclick="openTicket('${f.ticket}')">
+                        <div class="flight-card relative group">
+                            <div class="absolute inset-0 bg-blue-500/0 group-hover:bg-blue-500/5 transition z-10"></div>
+                            <div class="p-3 bg-slate-50 border-b border-dashed border-slate-300 flex justify-between items-center"><img src="${f.logo}" class="h-6 object-contain"><span class="font-mono text-xs font-bold text-slate-400 flex items-center gap-1"><i class="fas fa-file-pdf text-red-500"></i> ${f.code}</span></div>
+                            <div class="p-4 flex justify-between items-center"><div><div class="text-2xl font-black text-slate-800 font-mono">${f.dept}</div><div class="text-xs text-slate-400 font-bold mt-1">${f.from} <span class="bg-slate-100 px-1 rounded">${f.term}</span></div></div><div class="flex-1 px-4 text-center"><div class="text-[10px] text-blue-500 font-bold mb-1">查看機票</div><i class="fas fa-plane text-blue-300 transform rotate-90 md:rotate-0"></i></div><div class="text-right"><div class="text-2xl font-black text-slate-800 font-mono">${f.arr}</div><div class="text-xs text-slate-400 font-bold mt-1">${f.to}</div></div></div>
+                        </div>
+                    </div>`;
+                }
+                const fallbackImg = `https://source.unsplash.com/200x200/?${item.title.split(' ')[0]},japan`;
+                let typeColor = item.type === 'food' ? 'bg-food' : item.type === 'hotel' ? 'bg-hotel' : 'bg-spot';
+                return `
+                <div class="timeline-item relative flex gap-3 pl-14 group">
+                    <div class="timeline-line absolute left-[50px] top-8 bottom-[-16px] w-0.5 bg-slate-200 z-0"></div>
+                    <div class="absolute left-2 top-1 text-[11px] font-bold text-slate-400 w-10 text-right font-mono">${item.time}</div>
+                    <div class="flex-1 bg-white border border-slate-100 p-3 rounded-2xl shadow-sm flex gap-3 transition hover:shadow-md cursor-pointer relative z-10" onclick="focusItem(${i})">
+                        ${item.img ? `<img src="${item.img}" onerror="this.onerror=null;this.src='${fallbackImg}';" class="w-20 h-20 rounded-xl object-cover bg-slate-100 flex-shrink-0">` : ''}
+                        <div class="flex-1 min-w-0"><div class="flex items-center gap-1.5 mb-1"><span class="w-2 h-2 rounded-full ${typeColor}"></span><span class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">${item.type}</span></div><h3 class="font-bold text-slate-800 text-sm leading-snug mb-2 truncate">${item.title}</h3><button class="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded-full font-bold transition flex items-center w-fit" onclick="event.stopPropagation(); openModal(${i})"><i class="fas fa-info-circle mr-1"></i>詳細資訊</button></div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // --- 核心導航繪圖 ---
+        function showRouteTo(lat, lon) {
+            routeGroup.clearLayers();
+            if (!currentUserLoc) return false; 
+
+            const dist = getDistance([currentUserLoc.lat, currentUserLoc.lng], [lat, lon]).toFixed(1);
+            
+            // 標籤顯示
+            L.marker([lat, lon], {
+                icon: L.divIcon({
+                    className: 'dist-label-icon',
+                    html: `<div class="dist-label-container"><div class="dist-label"><i class="fas fa-location-arrow text-sky-300"></i><span>距您 ${dist} km</span></div></div>`,
+                    iconSize: [160, 40],
+                    iconAnchor: [80, 0]
+                })
+            }).addTo(routeGroup);
+
+            // 距離判斷：若大於 50km 只飛過去不畫線
+            if (parseFloat(dist) > 50) {
+                flyToLoc(lat, lon);
+                return true;
+            }
+
+            const latlngs = [currentUserLoc, [lat, lon]];
+            L.polyline(latlngs, {color: '#6366f1', weight: 4, opacity: 0.8, dashArray: '10, 10', lineCap: 'round'}).addTo(routeGroup);
+
+            // 避讓 Bottom Sheet 的 Padding 計算
+            const isMobile = window.innerWidth < 768;
+            let bottomPad = 50;
+            if(isMobile) {
+                if(sheetState === 0) bottomPad = window.innerHeight * 0.55; 
+                else if(sheetState === 2) bottomPad = 180;
+            }
+
+            map.fitBounds(latlngs, { 
+                paddingTopLeft: [50, 50],
+                paddingBottomRight: [50, bottomPad]
+            });
+            return true;
+        }
+
+        // --- 地圖互動控制 ---
+        function focusItem(index) {
+            const item = itinerary[activeDayIndex].items[index];
+            if(sheetState === 1 && window.innerWidth < 768) setSheetState(0);
+
+            if (item.path) {
+                map.fitBounds(item.path, { padding: [50, 50] });
+                updateNearby(item.items ? item.items[0].coords : item.coords);
+            } else {
+                const hasRoute = showRouteTo(item.coords[0], item.coords[1]);
+                if (!hasRoute) flyToLoc(item.coords[0], item.coords[1]);
+                updateNearby(item.coords);
+            }
+        }
+
+        function flyToLoc(lat, lon, forceNoPadding = false) { 
+            const isMobile = window.innerWidth < 768;
+            let paddingOptions = {};
+            
+            if (isMobile && !forceNoPadding) {
+                let offsetY = 0;
+                if(sheetState === 0) offsetY = window.innerHeight * 0.25; 
+                paddingOptions = { paddingBottomRight: [0, offsetY * 2] }; 
+            }
+            map.flyTo([lat, lon], 16, { animate: true, duration: 1.2, ...paddingOptions }); 
+        }
+
+        // --- 點擊附近地標導航 ---
+        function navigateToLandmark(lat, lon) {
+            if(sheetState === 1 && window.innerWidth < 768) setSheetState(0);
+
+            nearbyGroup.eachLayer(layer => {
+                if(layer._icon) {
+                    // 重置選中狀態
+                    layer._icon.classList.remove('active'); 
+                }
+            });
+
+            const hasRoute = showRouteTo(lat, lon);
+            if (!hasRoute) flyToLoc(lat, lon);
+        }
+
+        // --- 更新地圖上的專屬 Icon ---
+        function updateMap(data) {
+            markersGroup.clearLayers();
+            routeGroup.clearLayers();
+            const points = [];
+            data.items.forEach((item, i) => {
+                if (item.path) {
+                    L.polyline(item.path, { color: '#6366f1', weight: 3, dashArray: '10, 10' }).addTo(markersGroup);
+                    L.marker(item.coords, { icon: L.divIcon({ html: '<i class="fas fa-plane text-indigo-500 text-2xl transform -rotate-45"></i>', className: 'bg-transparent' }) }).addTo(markersGroup);
+                } else {
+                    let colorClass = item.type==='food'?'bg-food':item.type==='hotel'?'bg-hotel':'bg-spot';
+                    // 專屬 ICON 生成
+                    const iconName = item.icon ? item.icon : (item.type==='food'?'utensils':item.type==='hotel'?'bed':'camera');
+                    
+                    const icon = L.divIcon({ 
+                        className: 'custom-div-icon', // 避免 Leaflet 預設樣式干擾
+                        html: `<div class="custom-marker ${colorClass}"><i class="fas fa-${iconName}"></i></div>`, 
+                        iconSize: [32, 32], 
+                        iconAnchor: [16, 16] 
+                    });
+                    
+                    const marker = L.marker(item.coords, { icon: icon }).addTo(markersGroup);
+                    marker.on('click', () => { focusItem(i); if(!item.path) openModal(i); });
+                    points.push(item.coords);
+                }
+            });
+            if (points.length > 0 && !data.items[0].path) map.fitBounds(points, { padding: [100, 100] });
+        }
+
+        // --- 更新附近地標 (專屬 Icon) ---
+        function updateNearby(center) {
+            const list = document.getElementById('nearby-list');
+            nearbyGroup.clearLayers(); 
+            if(!center) return;
+
+            const nearby = landmarksDB.map(s => ({ ...s, dist: getDistance(center, s.coords) })).filter(s => s.dist <= 5).sort((a,b) => a.dist - b.dist);
+            
+            nearby.forEach(s => {
+                const iconName = s.icon || 'map-marker-alt';
+                const icon = L.divIcon({ 
+                    className: 'custom-div-icon',
+                    html: `<div class="custom-marker bg-nearby"><i class="fas fa-${iconName}"></i></div>`, 
+                    iconSize: [32, 32], 
+                    iconAnchor: [16, 16] 
+                });
+
+                const marker = L.marker(s.coords, { icon: icon }).addTo(nearbyGroup);
+                marker.on('click', () => { navigateToLandmark(s.coords[0], s.coords[1]); });
+            });
+
+            if(nearby.length === 0) { list.innerHTML = `<div class="text-xs text-slate-400 py-4 pl-4">附近無特定地標</div>`; return; }
+            
+            list.innerHTML = nearby.map(s => {
+                const fallbackImg = `https://source.unsplash.com/150x150/?${s.q}`;
+                const imgSrc = s.img ? s.img : fallbackImg;
+                return `
+                <div class="flex-shrink-0 w-32 bg-white rounded-xl border border-slate-100 overflow-hidden cursor-pointer active:scale-95 transition" onclick="navigateToLandmark(${s.coords[0]}, ${s.coords[1]})">
+                    <div class="h-20 relative">
+                        <img src="${imgSrc}" onerror="this.onerror=null;this.src='${fallbackImg}';" class="w-full h-full object-cover">
+                        <div class="absolute bottom-1 right-1 bg-black/60 text-white text-[9px] px-1.5 rounded backdrop-blur-sm">${s.dist.toFixed(1)}km</div>
+                    </div>
+                    <div class="p-2"><h4 class="text-xs font-bold text-slate-800 truncate">${s.name}</h4></div>
+                </div>`;
+            }).join('');
+        }
+
+        function getDistance(c1, c2) {
+            const R = 6371; const dLat = (c2[0]-c1[0])*Math.PI/180; const dLon = (c2[1]-c1[1])*Math.PI/180;
+            const a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(c1[0]*Math.PI/180)*Math.cos(c2[0]*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        async function fetchWeather(lat, lon) {
+            const iconEl = document.getElementById('weather-icon');
+            const tempEl = document.getElementById('weather-temp');
+            const descEl = document.getElementById('weather-desc');
+            descEl.innerText = "載入中";
+            iconEl.className = "fas fa-spinner fa-spin text-slate-400";
+            try { 
+                const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=apparent_temperature`); 
+                const d = await res.json(); 
+                const code = d.current_weather.weathercode;
+                const temp = Math.round(d.current_weather.temperature);
+                const isDay = d.current_weather.is_day;
+                let text = "晴朗", icon = isDay ? "fa-sun text-orange-400" : "fa-moon text-yellow-300";
+                if (code === 0) { }
+                else if (code >= 1 && code <= 3) { text = "多雲"; icon = "fa-cloud text-slate-400"; }
+                else if (code === 45 || code === 48) { text = "有霧"; icon = "fa-smog text-slate-400"; }
+                else if (code >= 51 && code <= 55) { text = "毛毛雨"; icon = "fa-cloud-rain text-blue-300"; }
+                else if (code >= 61 && code <= 65) { text = "有雨"; icon = "fa-umbrella text-blue-500"; }
+                else if (code >= 66 && code <= 67) { text = "凍雨"; icon = "fa-icicles text-cyan-500"; }
+                else if (code >= 71 && code <= 77) { text = "降雪"; icon = "fa-snowflake text-sky-300 animate-spin-slow"; }
+                else if (code >= 80 && code <= 82) { text = "陣雨"; icon = "fa-cloud-showers-heavy text-blue-600"; }
+                else if (code >= 85 && code <= 86) { text = "暴雪"; icon = "fa-snowflake text-white"; }
+                else if (code >= 95) { text = "雷雨"; icon = "fa-bolt text-yellow-500"; }
+                tempEl.innerText = `${temp}°`; 
+                descEl.innerText = text;
+                iconEl.className = `fas ${icon}`;
+            } catch(e) {
+                descEl.innerText = "N/A";
+                iconEl.className = "fas fa-question text-slate-300";
+            }
+        }
+        function openTicket(filename) {
+            if(!filename) return alert("找不到機票檔案");
+            document.getElementById('pdf-frame').src = filename;
+            document.getElementById('pdf-download-btn').href = filename;
+            document.getElementById('pdf-modal').classList.add('open');
+        }
+        function closePdfModal() {
+            document.getElementById('pdf-modal').classList.remove('open');
+            setTimeout(() => { document.getElementById('pdf-frame').src = ''; }, 300);
+        }
+        function openModal(index) {
+            const item = itinerary[activeDayIndex].items[index];
+            if (item.type.includes("flight")) return;
+            const modal = document.getElementById('detail-modal');
+            const fallbackImg = `https://source.unsplash.com/600x400/?${item.title.split(' ')[0]},japan`;
+            const modalImgEl = document.getElementById('modal-img');
+            modalImgEl.src = item.img || fallbackImg;
+            modalImgEl.onerror = function() { this.src = fallbackImg; };
+            document.getElementById('modal-tag').innerText = item.type.toUpperCase();
+            document.getElementById('modal-tag').className = `text-xs font-bold px-2 py-0.5 rounded inline-block mb-1 text-white ${item.type==='food'?'bg-amber-500':item.type==='hotel'?'bg-blue-500':'bg-red-500'}`;
+            document.getElementById('modal-title').innerText = item.title;
+            document.getElementById('modal-desc').innerText = item.desc || "暫無詳細介紹";
+            document.getElementById('modal-tips').innerText = item.tips || "記得多拍照！";
+            document.getElementById('modal-nav-btn').href = `https://www.google.com/maps/dir/?api=1&destination=${item.coords[0]},${item.coords[1]}`;
+            modal.classList.add('open');
+        }
+        function closeModal() { document.getElementById('detail-modal').classList.remove('open'); }
+        function renderTabs() { document.getElementById('day-tabs').innerHTML = itinerary.map((d, i) => `<button onclick="selectDay(${i})" id="tab-${i}" class="day-pill flex-shrink-0 px-5 py-2 rounded-full text-sm font-bold border border-slate-200 bg-white text-slate-500 shadow-sm whitespace-nowrap">${d.day}</button>`).join(''); }
+        function locateUser(setView = true) { map.locate({setView: setView, maxZoom: 16}); }
+        map.on('locationfound', (e) => { 
+            currentUserLoc = e.latlng;
+            map.eachLayer((layer) => { if(layer.options.className === 'c') map.removeLayer(layer); });
+            L.marker(e.latlng, {icon: L.divIcon({ className: 'c', html: `<div class="w-8 h-8 bg-pink-500 rounded-full border-4 border-white shadow-lg flex items-center justify-center animate-bounce text-white text-xs"><i class="fas fa-user"></i></div>` })}).addTo(map).bindPopup("你").openPopup(); 
+        });
+
+        init();
+    </script>
+</body>
+</html>
